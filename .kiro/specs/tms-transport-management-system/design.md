@@ -3951,3 +3951,1050 @@ public class GlobalExceptionHandler {
 }
 ```
 
+---
+
+## 14. Estrutura Frontend Next.js
+
+### 14.1 Árvore de Diretórios
+
+```
+tms-web/
+├── package.json
+├── next.config.ts
+├── tailwind.config.ts
+├── tsconfig.json
+└── src/
+    ├── app/
+    │   ├── layout.tsx                    # Root layout com providers
+    │   ├── (auth)/
+    │   │   └── login/
+    │   │       └── page.tsx              # Página de login (redirect para Keycloak)
+    │   ├── dashboard/
+    │   │   └── page.tsx                  # Dashboard: alertas, atividades em curso, KPIs
+    │   ├── vehicles/
+    │   │   ├── page.tsx                  # Listagem de viaturas
+    │   │   ├── new/
+    │   │   │   └── page.tsx              # Formulário de criação
+    │   │   └── [id]/
+    │   │       ├── page.tsx              # Detalhe + vista consolidada
+    │   │       ├── documents/
+    │   │       │   └── page.tsx          # Gestão de documentos
+    │   │       ├── maintenance/
+    │   │       │   └── page.tsx          # Histórico de manutenções
+    │   │       └── checklist/
+    │   │           └── page.tsx          # Checklists de inspeção
+    │   ├── drivers/
+    │   │   ├── page.tsx
+    │   │   ├── new/
+    │   │   │   └── page.tsx
+    │   │   └── [id]/
+    │   │       └── page.tsx
+    │   ├── activities/
+    │   │   ├── page.tsx
+    │   │   ├── new/
+    │   │   │   └── page.tsx
+    │   │   └── [id]/
+    │   │       └── page.tsx
+    │   ├── alerts/
+    │   │   └── page.tsx
+    │   ├── audit/
+    │   │   └── page.tsx
+    │   └── settings/
+    │       └── page.tsx
+    ├── components/
+    │   ├── ui/                           # Componentes shadcn/ui (gerados)
+    │   │   ├── button.tsx
+    │   │   ├── card.tsx
+    │   │   ├── dialog.tsx
+    │   │   ├── input.tsx
+    │   │   ├── select.tsx
+    │   │   ├── table.tsx
+    │   │   ├── badge.tsx
+    │   │   ├── toast.tsx
+    │   │   └── ...
+    │   └── shared/
+    │       ├── PageHeader.tsx
+    │       ├── DataTable.tsx
+    │       ├── StatusBadge.tsx
+    │       ├── AlertBanner.tsx
+    │       ├── Timeline.tsx
+    │       └── ConfirmDialog.tsx
+    ├── features/
+    │   ├── vehicles/
+    │   │   ├── VehicleForm.tsx
+    │   │   ├── VehicleTable.tsx
+    │   │   ├── VehicleConsolidatedView.tsx
+    │   │   ├── DocumentsSection.tsx
+    │   │   ├── AccessoriesSection.tsx
+    │   │   ├── MaintenanceSection.tsx
+    │   │   └── ChecklistSection.tsx
+    │   ├── drivers/
+    │   │   ├── DriverForm.tsx
+    │   │   ├── DriverTable.tsx
+    │   │   └── AvailabilityBadge.tsx
+    │   ├── activities/
+    │   │   ├── ActivityForm.tsx
+    │   │   ├── ActivityTable.tsx
+    │   │   ├── AllocationPanel.tsx
+    │   │   └── StatusTransitionButton.tsx
+    │   └── alerts/
+    │       ├── AlertList.tsx
+    │       └── AlertSeverityBadge.tsx
+    ├── lib/
+    │   ├── api/
+    │   │   ├── client.ts                 # Axios instance com JWT interceptor
+    │   │   ├── vehicles.ts
+    │   │   ├── drivers.ts
+    │   │   ├── activities.ts
+    │   │   ├── alerts.ts
+    │   │   └── audit.ts
+    │   ├── auth/
+    │   │   └── keycloak.ts
+    │   └── utils/
+    │       ├── dates.ts
+    │       └── formatters.ts
+    ├── store/
+    │   └── alertsSlice.ts                # Redux apenas para contagem global de alertas
+    └── types/
+        ├── vehicle.ts
+        ├── driver.ts
+        ├── activity.ts
+        └── alert.ts
+```
+
+### 14.2 lib/api/client.ts
+
+```typescript
+// lib/api/client.ts
+import axios, { AxiosInstance, AxiosResponse } from 'axios';
+import { getSession } from 'next-auth/react';
+
+export interface ApiResponse<T> {
+  data: T | null;
+  error: {
+    code: string;
+    message: string;
+    details: string[];
+  } | null;
+}
+
+export interface PagedResponse<T> {
+  content: T[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+}
+
+const apiClient: AxiosInstance = axios.create({
+  baseURL: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8081',
+  timeout: 10_000,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Interceptor de request: injeta JWT do Keycloak
+apiClient.interceptors.request.use(async (config) => {
+  const session = await getSession();
+  if (session?.accessToken) {
+    config.headers.Authorization = `Bearer ${session.accessToken}`;
+  }
+  return config;
+});
+
+// Interceptor de response: trata erros globais
+apiClient.interceptors.response.use(
+  (response: AxiosResponse) => response,
+  async (error) => {
+    if (error.response?.status === 401) {
+      // Token expirado — redireciona para login
+      window.location.href = '/login';
+    }
+    return Promise.reject(error);
+  }
+);
+
+export default apiClient;
+```
+
+### 14.3 lib/api/vehicles.ts
+
+```typescript
+// lib/api/vehicles.ts
+import apiClient, { ApiResponse, PagedResponse } from './client';
+import { Vehicle, VehicleConsolidated, VehicleCreateInput } from '@/types/vehicle';
+
+export const vehiclesApi = {
+  list: (params?: { page?: number; size?: number; status?: string; location?: string }) =>
+    apiClient.get<ApiResponse<PagedResponse<Vehicle>>>('/api/v1/vehicles', { params }),
+
+  search: (q: string, page = 0, size = 10) =>
+    apiClient.get<ApiResponse<PagedResponse<Vehicle>>>('/api/v1/vehicles/search', {
+      params: { q, page, size },
+    }),
+
+  getById: (id: string) =>
+    apiClient.get<ApiResponse<Vehicle>>(`/api/v1/vehicles/${id}`),
+
+  getConsolidated: (id: string) =>
+    apiClient.get<ApiResponse<VehicleConsolidated>>(`/api/v1/vehicles/${id}/consolidated`),
+
+  create: (data: VehicleCreateInput) =>
+    apiClient.post<ApiResponse<Vehicle>>('/api/v1/vehicles', data),
+
+  update: (id: string, data: Partial<VehicleCreateInput>) =>
+    apiClient.put<ApiResponse<Vehicle>>(`/api/v1/vehicles/${id}`, data),
+
+  updateStatus: (id: string, status: string) =>
+    apiClient.patch<ApiResponse<Vehicle>>(`/api/v1/vehicles/${id}/status`, { status }),
+
+  delete: (id: string) =>
+    apiClient.delete<ApiResponse<void>>(`/api/v1/vehicles/${id}`),
+};
+```
+
+### 14.4 types/vehicle.ts
+
+```typescript
+// types/vehicle.ts
+export type VehicleStatus = 'DISPONIVEL' | 'INDISPONIVEL' | 'EM_MANUTENCAO' | 'ABATIDA';
+
+export interface Vehicle {
+  id: string;
+  plate: string;
+  brand: string;
+  model: string;
+  vehicleType: string;
+  capacity: number;
+  activityLocation: string;
+  activityStartDate: string;
+  status: VehicleStatus;
+  currentDriver: {
+    id: string;
+    fullName: string;
+    licenseNumber: string;
+  } | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: string;
+  updatedBy: string;
+}
+
+export interface VehicleDocument {
+  id: string;
+  documentType: string;
+  documentNumber: string | null;
+  issueDate: string | null;
+  expiryDate: string | null;
+  issuingEntity: string | null;
+  status: 'VALIDO' | 'EXPIRADO' | 'PENDENTE_RENOVACAO' | 'CANCELADO';
+  notes: string | null;
+  fileId: string | null;
+}
+
+export interface VehicleAccessory {
+  id: string;
+  accessoryType: string;
+  status: 'PRESENTE' | 'AUSENTE' | 'DANIFICADO';
+  lastCheckedAt: string | null;
+  lastCheckedBy: string | null;
+}
+
+export interface MaintenanceRecord {
+  id: string;
+  maintenanceType: 'PREVENTIVA' | 'CORRETIVA';
+  performedAt: string;
+  mileageAtService: number | null;
+  description: string;
+  supplier: string | null;
+  totalCost: number | null;
+  nextMaintenanceDate: string | null;
+}
+
+export interface VehicleConsolidated {
+  vehicle: Vehicle;
+  currentDriver: { id: string; fullName: string } | null;
+  activeAlerts: Alert[];
+  documents: VehicleDocument[];
+  accessories: VehicleAccessory[];
+  recentMaintenance: MaintenanceRecord[];
+  recentChecklists: ChecklistSummary[];
+  activeActivities: ActivitySummary[];
+  driverHistory: DriverHistoryEntry[];
+}
+
+export interface VehicleCreateInput {
+  plate: string;
+  brand: string;
+  model: string;
+  vehicleType: string;
+  capacity: number;
+  activityLocation: string;
+  activityStartDate: string;
+  status?: VehicleStatus;
+  notes?: string;
+}
+```
+
+### 14.5 store/alertsSlice.ts
+
+```typescript
+// store/alertsSlice.ts
+import { createSlice, createAsyncThunk, PayloadAction } from '@reduxjs/toolkit';
+import apiClient from '@/lib/api/client';
+
+interface AlertsState {
+  criticalCount: number;
+  warningCount: number;
+  loading: boolean;
+}
+
+const initialState: AlertsState = {
+  criticalCount: 0,
+  warningCount: 0,
+  loading: false,
+};
+
+export const fetchAlertCounts = createAsyncThunk('alerts/fetchCounts', async () => {
+  const response = await apiClient.get('/api/v1/alerts?resolved=false&size=1');
+  const data = response.data.data;
+  return {
+    criticalCount: data.criticalCount ?? 0,
+    warningCount: data.warningCount ?? 0,
+  };
+});
+
+const alertsSlice = createSlice({
+  name: 'alerts',
+  initialState,
+  reducers: {
+    setCriticalCount: (state, action: PayloadAction<number>) => {
+      state.criticalCount = action.payload;
+    },
+  },
+  extraReducers: (builder) => {
+    builder
+      .addCase(fetchAlertCounts.pending, (state) => { state.loading = true; })
+      .addCase(fetchAlertCounts.fulfilled, (state, action) => {
+        state.criticalCount = action.payload.criticalCount;
+        state.warningCount = action.payload.warningCount;
+        state.loading = false;
+      })
+      .addCase(fetchAlertCounts.rejected, (state) => { state.loading = false; });
+  },
+});
+
+export const { setCriticalCount } = alertsSlice.actions;
+export default alertsSlice.reducer;
+```
+
+### 14.6 features/vehicles/VehicleConsolidatedView.tsx (estrutura)
+
+```tsx
+// features/vehicles/VehicleConsolidatedView.tsx
+'use client';
+
+import { VehicleConsolidated } from '@/types/vehicle';
+import { AlertBanner } from '@/components/shared/AlertBanner';
+import { StatusBadge } from '@/components/shared/StatusBadge';
+import { DocumentsSection } from './DocumentsSection';
+import { AccessoriesSection } from './AccessoriesSection';
+import { MaintenanceSection } from './MaintenanceSection';
+import { ChecklistSection } from './ChecklistSection';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
+interface Props {
+  data: VehicleConsolidated;
+}
+
+export function VehicleConsolidatedView({ data }: Props) {
+  const { vehicle, activeAlerts, documents, accessories, recentMaintenance,
+          recentChecklists, activeActivities, currentDriver } = data;
+
+  return (
+    <div className="space-y-6">
+      {/* Alertas ativos em destaque no topo */}
+      {activeAlerts.length > 0 && (
+        <div className="space-y-2">
+          {activeAlerts.map(alert => (
+            <AlertBanner key={alert.id} alert={alert} />
+          ))}
+        </div>
+      )}
+
+      {/* Dados cadastrais */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-3">
+            <span className="text-2xl font-bold">{vehicle.plate}</span>
+            <StatusBadge status={vehicle.status} />
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div><span className="text-sm text-muted-foreground">Marca</span><p>{vehicle.brand}</p></div>
+            <div><span className="text-sm text-muted-foreground">Modelo</span><p>{vehicle.model}</p></div>
+            <div><span className="text-sm text-muted-foreground">Tipo</span><p>{vehicle.vehicleType}</p></div>
+            <div><span className="text-sm text-muted-foreground">Capacidade</span><p>{vehicle.capacity} kg</p></div>
+            <div><span className="text-sm text-muted-foreground">Local</span><p>{vehicle.activityLocation}</p></div>
+            <div>
+              <span className="text-sm text-muted-foreground">Motorista Atual</span>
+              <p>{currentDriver?.fullName ?? '—'}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Tabs para cada secção */}
+      <Tabs defaultValue="documents">
+        <TabsList>
+          <TabsTrigger value="documents">Documentos</TabsTrigger>
+          <TabsTrigger value="accessories">Acessórios</TabsTrigger>
+          <TabsTrigger value="maintenance">Manutenção</TabsTrigger>
+          <TabsTrigger value="checklists">Checklists</TabsTrigger>
+          <TabsTrigger value="activities">Atividades</TabsTrigger>
+        </TabsList>
+        <TabsContent value="documents">
+          <DocumentsSection documents={documents} vehicleId={vehicle.id} />
+        </TabsContent>
+        <TabsContent value="accessories">
+          <AccessoriesSection accessories={accessories} vehicleId={vehicle.id} />
+        </TabsContent>
+        <TabsContent value="maintenance">
+          <MaintenanceSection records={recentMaintenance} vehicleId={vehicle.id} />
+        </TabsContent>
+        <TabsContent value="checklists">
+          <ChecklistSection checklists={recentChecklists} vehicleId={vehicle.id} />
+        </TabsContent>
+        <TabsContent value="activities">
+          <div className="space-y-2">
+            {activeActivities.map(activity => (
+              <Card key={activity.id}>
+                <CardContent className="pt-4">
+                  <div className="flex justify-between items-center">
+                    <span className="font-medium">{activity.code} — {activity.title}</span>
+                    <StatusBadge status={activity.status} />
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+```
+
+---
+
+## 15. Estrutura App Flutter
+
+### 15.1 Árvore de Diretórios
+
+```
+tms-mobile/
+├── pubspec.yaml
+├── lib/
+│   ├── main.dart
+│   ├── core/
+│   │   ├── api/
+│   │   │   ├── api_client.dart           # Dio instance com JWT interceptor
+│   │   │   └── api_response.dart         # Modelo genérico de resposta
+│   │   ├── auth/
+│   │   │   ├── keycloak_service.dart     # OIDC com flutter_appauth
+│   │   │   └── auth_provider.dart        # Riverpod provider de autenticação
+│   │   ├── config/
+│   │   │   └── app_config.dart           # Configurações (base URL, Keycloak)
+│   │   └── error/
+│   │       └── app_exception.dart        # Exceções tipadas
+│   ├── features/
+│   │   ├── auth/
+│   │   │   ├── login_screen.dart
+│   │   │   └── login_provider.dart
+│   │   ├── activities/
+│   │   │   ├── activities_screen.dart    # Lista de atividades do motorista
+│   │   │   ├── activity_detail_screen.dart
+│   │   │   ├── activity_status_update.dart
+│   │   │   └── activities_provider.dart
+│   │   ├── checklist/
+│   │   │   ├── checklist_screen.dart
+│   │   │   └── checklist_provider.dart
+│   │   ├── vehicles/
+│   │   │   ├── vehicle_search_screen.dart
+│   │   │   ├── vehicle_detail_screen.dart
+│   │   │   └── vehicles_provider.dart
+│   │   └── alerts/
+│   │       ├── alerts_screen.dart
+│   │       └── alerts_provider.dart
+│   └── shared/
+│       ├── widgets/
+│       │   ├── status_chip.dart
+│       │   ├── alert_card.dart
+│       │   └── loading_overlay.dart
+│       └── models/
+│           ├── vehicle_model.dart
+│           ├── driver_model.dart
+│           ├── activity_model.dart
+│           ├── alert_model.dart
+│           └── checklist_model.dart
+└── test/
+    ├── activities_provider_test.dart
+    └── checklist_provider_test.dart
+```
+
+### 15.2 pubspec.yaml (dependências principais)
+
+```yaml
+name: tms_mobile
+description: TMS — Transport Management System Mobile App
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.19.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # HTTP
+  dio: ^5.4.3+1
+
+  # Estado (Riverpod)
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # Autenticação Keycloak (OIDC)
+  flutter_appauth: ^7.0.1
+  flutter_secure_storage: ^9.0.0
+
+  # Serialização JSON
+  json_annotation: ^4.9.0
+  freezed_annotation: ^2.4.1
+
+  # Navegação
+  go_router: ^13.2.1
+
+  # UI
+  material_color_utilities: ^0.11.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  build_runner: ^2.4.9
+  riverpod_generator: ^2.4.0
+  json_serializable: ^6.8.0
+  freezed: ^2.5.2
+  flutter_lints: ^3.0.2
+```
+
+### 15.3 core/api/api_client.dart
+
+```dart
+// core/api/api_client.dart
+import 'package:dio/dio.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../auth/auth_provider.dart';
+import '../config/app_config.dart';
+
+final apiClientProvider = Provider<Dio>((ref) {
+  final dio = Dio(BaseOptions(
+    baseUrl: AppConfig.apiBaseUrl,
+    connectTimeout: const Duration(seconds: 10),
+    receiveTimeout: const Duration(seconds: 10),
+    headers: {'Content-Type': 'application/json'},
+  ));
+
+  // Interceptor JWT
+  dio.interceptors.add(InterceptorsWrapper(
+    onRequest: (options, handler) async {
+      final authState = ref.read(authProvider);
+      final token = authState.accessToken;
+      if (token != null) {
+        options.headers['Authorization'] = 'Bearer $token';
+      }
+      handler.next(options);
+    },
+    onError: (error, handler) async {
+      if (error.response?.statusCode == 401) {
+        // Tenta renovar token
+        try {
+          await ref.read(authProvider.notifier).refreshToken();
+          final newToken = ref.read(authProvider).accessToken;
+          if (newToken != null) {
+            error.requestOptions.headers['Authorization'] = 'Bearer $newToken';
+            final response = await dio.fetch(error.requestOptions);
+            handler.resolve(response);
+            return;
+          }
+        } catch (_) {
+          // Falha na renovação — redireciona para login
+          ref.read(authProvider.notifier).logout();
+        }
+      }
+      handler.next(error);
+    },
+  ));
+
+  return dio;
+});
+```
+
+### 15.4 core/api/api_response.dart
+
+```dart
+// core/api/api_response.dart
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'api_response.freezed.dart';
+part 'api_response.g.dart';
+
+@freezed
+class ApiResponse<T> with _$ApiResponse<T> {
+  const factory ApiResponse({
+    T? data,
+    ApiError? error,
+  }) = _ApiResponse;
+
+  factory ApiResponse.fromJson(
+    Map<String, dynamic> json,
+    T Function(Object?) fromJsonT,
+  ) => _$ApiResponseFromJson(json, fromJsonT);
+}
+
+@freezed
+class ApiError with _$ApiError {
+  const factory ApiError({
+    required String code,
+    required String message,
+    @Default([]) List<String> details,
+  }) = _ApiError;
+
+  factory ApiError.fromJson(Map<String, dynamic> json) =>
+      _$ApiErrorFromJson(json);
+}
+```
+
+### 15.5 core/auth/keycloak_service.dart
+
+```dart
+// core/auth/keycloak_service.dart
+import 'package:flutter_appauth/flutter_appauth.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../config/app_config.dart';
+
+class KeycloakService {
+  static const _appAuth = FlutterAppAuth();
+  static const _storage = FlutterSecureStorage();
+
+  static const _accessTokenKey = 'access_token';
+  static const _refreshTokenKey = 'refresh_token';
+
+  Future<AuthorizationTokenResponse?> login() async {
+    try {
+      final result = await _appAuth.authorizeAndExchangeCode(
+        AuthorizationTokenRequest(
+          AppConfig.keycloakClientId,
+          AppConfig.keycloakRedirectUri,
+          issuer: AppConfig.keycloakIssuer,
+          scopes: ['openid', 'profile', 'email', 'roles'],
+        ),
+      );
+
+      if (result != null) {
+        await _storage.write(key: _accessTokenKey, value: result.accessToken);
+        await _storage.write(key: _refreshTokenKey, value: result.refreshToken);
+      }
+
+      return result;
+    } catch (e) {
+      throw AppException('Falha na autenticação: $e');
+    }
+  }
+
+  Future<TokenResponse?> refreshToken() async {
+    final refreshToken = await _storage.read(key: _refreshTokenKey);
+    if (refreshToken == null) return null;
+
+    try {
+      final result = await _appAuth.token(
+        TokenRequest(
+          AppConfig.keycloakClientId,
+          AppConfig.keycloakRedirectUri,
+          issuer: AppConfig.keycloakIssuer,
+          refreshToken: refreshToken,
+          scopes: ['openid', 'profile', 'email', 'roles'],
+        ),
+      );
+
+      if (result != null) {
+        await _storage.write(key: _accessTokenKey, value: result.accessToken);
+        if (result.refreshToken != null) {
+          await _storage.write(key: _refreshTokenKey, value: result.refreshToken);
+        }
+      }
+
+      return result;
+    } catch (e) {
+      await logout();
+      return null;
+    }
+  }
+
+  Future<void> logout() async {
+    await _storage.delete(key: _accessTokenKey);
+    await _storage.delete(key: _refreshTokenKey);
+  }
+
+  Future<String?> getAccessToken() => _storage.read(key: _accessTokenKey);
+}
+```
+
+### 15.6 features/activities/activities_provider.dart
+
+```dart
+// features/activities/activities_provider.dart
+import 'package:riverpod_annotation/riverpod_annotation.dart';
+import 'package:dio/dio.dart';
+import '../../core/api/api_client.dart';
+import '../../shared/models/activity_model.dart';
+
+part 'activities_provider.g.dart';
+
+@riverpod
+class ActivitiesNotifier extends _$ActivitiesNotifier {
+  @override
+  Future<List<Activity>> build() async {
+    return _fetchMyActivities();
+  }
+
+  Future<List<Activity>> _fetchMyActivities() async {
+    final dio = ref.read(apiClientProvider);
+    final response = await dio.get('/api/v1/activities', queryParameters: {
+      'assignedToMe': true,
+      'status': 'PLANEADA,EM_CURSO,SUSPENSA',
+      'size': 50,
+    });
+
+    final data = response.data['data'];
+    final content = data['content'] as List;
+    return content.map((e) => Activity.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<void> updateStatus(String activityId, String newStatus, {String? notes}) async {
+    final dio = ref.read(apiClientProvider);
+    await dio.patch('/api/v1/activities/$activityId/status', data: {
+      'newStatus': newStatus,
+      if (notes != null) 'notes': notes,
+    });
+    ref.invalidateSelf();
+  }
+
+  Future<void> refresh() async {
+    ref.invalidateSelf();
+  }
+}
+```
+
+### 15.7 shared/models/activity_model.dart
+
+```dart
+// shared/models/activity_model.dart
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'activity_model.freezed.dart';
+part 'activity_model.g.dart';
+
+@freezed
+class Activity with _$Activity {
+  const factory Activity({
+    required String id,
+    required String code,
+    required String title,
+    required String activityType,
+    required String location,
+    required String plannedStart,
+    required String plannedEnd,
+    String? actualStart,
+    String? actualEnd,
+    required String priority,
+    required String status,
+    ActivityVehicle? vehicle,
+    ActivityDriver? driver,
+    String? description,
+    String? notes,
+  }) = _Activity;
+
+  factory Activity.fromJson(Map<String, dynamic> json) =>
+      _$ActivityFromJson(json);
+}
+
+@freezed
+class ActivityVehicle with _$ActivityVehicle {
+  const factory ActivityVehicle({
+    required String id,
+    required String plate,
+    required String brand,
+    required String model,
+  }) = _ActivityVehicle;
+
+  factory ActivityVehicle.fromJson(Map<String, dynamic> json) =>
+      _$ActivityVehicleFromJson(json);
+}
+
+@freezed
+class ActivityDriver with _$ActivityDriver {
+  const factory ActivityDriver({
+    required String id,
+    required String fullName,
+    required String licenseNumber,
+  }) = _ActivityDriver;
+
+  factory ActivityDriver.fromJson(Map<String, dynamic> json) =>
+      _$ActivityDriverFromJson(json);
+}
+```
+
+---
+
+## 16. Plano de Implementação por Fases
+
+### Fase 1 — Infraestrutura Base (Semanas 1–2)
+
+**Objetivo:** Ter o projeto compilável, com autenticação funcional, base de dados configurada e estrutura de módulos definida.
+
+**Tarefas técnicas:**
+- Criar projeto Spring Boot 3.x com Java 21 e Maven
+- Configurar Spring Modulith com estrutura de pacotes por módulo
+- Configurar PostgreSQL + Flyway (migration V0 com extensão `uuid-ossp` e `pg_trgm`)
+- Configurar Spring Security + Keycloak JWT (SecurityConfig, KeycloakJwtAuthenticationConverter)
+- Configurar Spring Data JPA Auditing (`@EnableJpaAuditing`, `AuditorAware`)
+- Implementar `ApiResponse<T>` e `PagedResponse<T>` genéricos
+- Implementar `GlobalExceptionHandler`
+- Configurar logging estruturado JSON
+- Configurar Spring Boot Actuator (health, metrics, prometheus)
+- Configurar Keycloak: realm `tms`, client `tms-backend`, roles
+- Criar pipeline CI/CD básico (build + testes)
+- Criar projeto Next.js com shadcn/ui, TailwindCSS, NextAuth + Keycloak
+- Criar projeto Flutter com estrutura de pastas, Riverpod, flutter_appauth
+
+**Critérios de aceitação:**
+- `GET /actuator/health` retorna `{"status":"UP"}`
+- Pedido sem JWT retorna HTTP 401
+- Pedido com JWT válido mas sem role retorna HTTP 403
+- Flyway executa migrations sem erros
+- Frontend Next.js autentica via Keycloak e obtém token JWT
+- App Flutter autentica via Keycloak e obtém token JWT
+
+---
+
+### Fase 2 — Módulo Vehicle (Semanas 3–5)
+
+**Objetivo:** CRUD completo de viaturas com documentação, acessórios, manutenção e checklists.
+
+**Tarefas técnicas:**
+- Migrations V1 (vehicles), V4 (vehicle_documents, vehicle_accessories), V5 (maintenance_records), V6 (checklist_templates, checklist_inspections)
+- Entidades JPA: `Vehicle`, `VehicleDocument`, `VehicleAccessory`, `MaintenanceRecord`, `ChecklistTemplate`, `ChecklistTemplateItem`, `ChecklistInspection`, `ChecklistInspectionItem`
+- Repositórios Spring Data JPA com queries customizadas
+- Serviços: `VehicleService`, `VehicleDocumentService`, `MaintenanceService`, `ChecklistService`
+- Controllers REST com `@PreAuthorize`
+- Mappers MapStruct
+- Validações Bean Validation nos DTOs
+- Upload de ficheiros: `FileStoragePort` + `S3FileStorageAdapter` (ou local para dev)
+- Migration V9 (files)
+- Endpoint `GET /api/v1/vehicles/{id}/consolidated`
+- Pesquisa por matrícula com `pg_trgm` (pesquisa parcial)
+- Auditoria via `@Auditable` em operações de escrita
+- Testes unitários dos serviços
+- Testes de integração dos endpoints principais
+
+**Critérios de aceitação:**
+- CRUD completo de viaturas funcional
+- Upload de ficheiro PDF/JPG/PNG com limite de 10 MB
+- Pesquisa parcial por matrícula retorna resultados em < 1s
+- Vista consolidada retorna todos os dados associados
+- Auditoria regista criação e atualização de viaturas
+
+---
+
+### Fase 3 — Módulo Driver (Semanas 6–7)
+
+**Objetivo:** CRUD de motoristas com documentação e integração com RH_Sistema.
+
+**Tarefas técnicas:**
+- Migrations V2 (drivers), V4 (driver_documents)
+- Entidades JPA: `Driver`, `DriverDocument`
+- Serviços: `DriverService`, `DriverDocumentService`
+- Controllers REST com `@PreAuthorize`
+- `RhIntegrationPort` + `RhRestAdapter` com Caffeine cache (TTL 15 min)
+- `RhModuleAdapter` (stub para desenvolvimento)
+- `RhIntegrationConfig` com `@ConditionalOnProperty`
+- Endpoint `GET /api/v1/drivers/{id}/availability`
+- Webhook `POST /api/v1/integration/rh/availability` (role `RH_INTEGRADOR`)
+- Auditoria de operações de escrita
+- Testes unitários com mock do `RhIntegrationPort`
+
+**Critérios de aceitação:**
+- CRUD completo de motoristas funcional
+- Consulta de disponibilidade retorna dados do RH (ou fallback com mensagem)
+- Cache de disponibilidade funciona (segunda chamada usa cache)
+- Webhook RH protegido por role `RH_INTEGRADOR`
+
+---
+
+### Fase 4 — Módulo Activity (Semanas 8–10)
+
+**Objetivo:** Ciclo de vida completo das atividades com motor de alocação e validações.
+
+**Tarefas técnicas:**
+- Migration V3 (activities, activity_events)
+- Entidades JPA: `Activity`, `ActivityEvent`
+- `ActivityCodeGenerator` (formato `ACT-{ANO}-{SEQ}`)
+- `ActivityService` com máquina de estados (`ActivityStatus.validateTransition`)
+- `AllocationValidationService` com todos os 8 passos de validação
+- Pessimistic locking nas queries de conflito (`@Lock(PESSIMISTIC_WRITE)`)
+- Controller `ActivityController` com endpoints de alocação e transição de estado
+- Auditoria de todas as transições de estado
+- Testes unitários do `AllocationValidationService` (todos os cenários de bloqueio)
+- Testes de integração com cenários de conflito concorrente
+
+**Critérios de aceitação:**
+- Criação de atividade gera código `ACT-{ANO}-{SEQ}` único
+- Alocação com viatura em manutenção é bloqueada com mensagem clara
+- Alocação com documento expirado é bloqueada com lista de documentos
+- Conflito de alocação simultânea é detetado e bloqueado
+- Transição inválida de estado retorna HTTP 422 com mensagem
+- Transição `PLANEADA → EM_CURSO` verifica checklist crítica
+
+---
+
+### Fase 5 — Módulo Alert (Semana 11)
+
+**Objetivo:** Sistema de alertas automáticos com job agendado e resolução automática.
+
+**Tarefas técnicas:**
+- Migration V7 (alerts, alert_configurations + dados iniciais)
+- Entidades JPA: `Alert`, `AlertConfiguration`
+- `AlertScheduler` com `@Scheduled(cron = "0 0 6 * * *")`
+- `AlertService` com lógica de geração por tipo (DOCUMENT_EXPIRING, DOCUMENT_EXPIRED, MAINTENANCE_DUE, MAINTENANCE_OVERDUE)
+- Deduplicação via índice único `(alert_type, entity_id) WHERE is_resolved = FALSE`
+- `AlertResolutionService` para resolução automática
+- Controller `AlertController` e `AlertConfigurationController`
+- Testes unitários do `AlertService`
+
+**Critérios de aceitação:**
+- Job corre às 06:00 e gera alertas para documentos a expirar
+- Alertas duplicados não são criados (deduplicação funciona)
+- Quando documento é renovado, alerta é resolvido automaticamente
+- Configuração de dias de antecedência é respeitada
+
+---
+
+### Fase 6 — Módulo Audit (Semana 12)
+
+**Objetivo:** Auditoria completa e imutável de todas as operações críticas.
+
+**Tarefas técnicas:**
+- Migration V8 (audit_logs)
+- Entidade JPA `AuditLog` (imutável — sem setters, sem `@LastModifiedDate`)
+- `AuditAspect` com `@Around` em métodos `@Auditable`
+- `AuditEvent` record + `@ApplicationModuleListener` no `AuditService`
+- `AuditController` com filtros (entityType, operation, performedBy, from, to)
+- Verificar que `AuditLog` não tem endpoints de escrita expostos
+- Testes de integração: verificar que operações de escrita geram registos de auditoria
+
+**Critérios de aceitação:**
+- Criação de viatura gera registo de auditoria com `operation = CRIACAO`
+- Atualização de estado de atividade gera registo com valores anteriores e novos
+- Nenhum endpoint permite alterar ou eliminar registos de auditoria
+- Consulta de auditoria com filtros retorna resultados paginados
+
+---
+
+### Fase 7 — Frontend Web Next.js (Semanas 13–16)
+
+**Objetivo:** Interface web completa para todos os módulos.
+
+**Semana 13 — Dashboard e Viaturas:**
+- Dashboard com contadores de alertas, atividades em curso, viaturas indisponíveis
+- Listagem de viaturas com filtros e paginação
+- Formulário de criação/edição de viatura
+- Vista consolidada por matrícula com tabs
+
+**Semana 14 — Motoristas e Documentação:**
+- Listagem e formulário de motoristas
+- Gestão de documentos (viatura e motorista) com upload de ficheiros
+- Indicador de disponibilidade RH na ficha do motorista
+
+**Semana 15 — Atividades:**
+- Listagem de atividades com filtros por estado e prioridade
+- Formulário de criação de atividade
+- Painel de alocação com validação em tempo real
+- Botões de transição de estado com confirmação
+
+**Semana 16 — Alertas, Auditoria e Configurações:**
+- Painel de alertas agrupados por severidade
+- Interface de auditoria com filtros
+- Página de configurações (períodos de alerta, templates de checklist)
+- Testes E2E com Playwright nos fluxos principais
+
+**Critérios de aceitação:**
+- Interface responsiva em ecrãs >= 1024px
+- Feedback visual (toast) em todas as operações
+- Pesquisa por matrícula retorna sugestões a partir de 3 caracteres
+- Interface simplificada para perfil MOTORISTA
+
+---
+
+### Fase 8 — App Flutter (Semanas 17–19)
+
+**Objetivo:** Aplicação móvel com funcionalidades essenciais para motoristas e operadores em campo.
+
+**Semana 17 — Autenticação e Atividades:**
+- Autenticação Keycloak com flutter_appauth
+- Ecrã de atividades atribuídas ao utilizador autenticado
+- Detalhe de atividade com informação completa
+- Atualização de estado de atividade (EM_CURSO, SUSPENSA, CONCLUIDA)
+
+**Semana 18 — Checklist e Viaturas:**
+- Ecrã de preenchimento de checklist por atividade
+- Submissão de checklist com validação de itens críticos
+- Pesquisa de viatura por matrícula
+- Vista de detalhe de viatura (dados cadastrais, documentos, alertas)
+
+**Semana 19 — Alertas, Polimento e Testes:**
+- Ecrã de alertas ativos
+- Tratamento de erros e estados de loading
+- Testes de widget e integração
+- Build para Android e iOS
+
+**Critérios de aceitação:**
+- Autenticação Keycloak funcional em Android e iOS
+- Checklist submetida via app é processada com as mesmas validações da web
+- Pesquisa de viatura por matrícula funcional
+- App funciona com conectividade intermitente (mensagens de erro claras)
+
+---
+
+## Resumo do Plano
+
+| Fase | Semanas | Módulo/Componente | Entregável Principal |
+|---|---|---|---|
+| 1 | 1–2 | Infraestrutura | Projeto compilável, auth funcional, CI/CD |
+| 2 | 3–5 | Vehicle | CRUD viaturas, docs, manutenção, checklist |
+| 3 | 6–7 | Driver | CRUD motoristas, integração RH |
+| 4 | 8–10 | Activity | Ciclo de vida, motor de alocação |
+| 5 | 11 | Alert | Alertas automáticos, job agendado |
+| 6 | 12 | Audit | Auditoria imutável, AOP |
+| 7 | 13–16 | Frontend Web | Interface Next.js completa |
+| 8 | 17–19 | App Flutter | App móvel funcional |
+
+**Duração total estimada:** 19 semanas (~5 meses)
+
+---
+
+*Documento gerado para uso interno da equipa de desenvolvimento. Versão 1.0 — sujeito a revisão após validação com stakeholders.*

@@ -1,0 +1,30 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/tms_dev
+    username: tms_dev
+    password: tms_dev
+  jpa:
+    properties:
+      hibernate:
+        format_sql: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8080/realms/tms
+          jwk-set-uri: http://localhost:8080/realms/tms/protocol/openid-connect/certs
+
+logging:
+  level:
+    pt.company.tms: DEBUG
+    org.hibernate.SQL: DEBUG
+
+tms:
+  integration:
+    rh:
+      mode: rest
+      base-url: http://localhost:9090
+      api-key: dev-api-key
+  storage:
+    type: local
+    local-path: /tmp/tms-files
