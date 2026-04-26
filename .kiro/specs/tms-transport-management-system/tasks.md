@@ -27,7 +27,7 @@ Este plano de implementação converte o design técnico do TMS numa sequência 
   - Configurar `@EnableJpaAuditing` e implementar `AuditorAware<String>` que lê o utilizador do `SecurityContext`
   - _Requisitos: 14.5, 16.2_
 
-- [ ] 3. Implementar módulo `shared` — DTOs genéricos, exceções e utilitários
+- [x] 3. Implementar módulo `shared` — DTOs genéricos, exceções e utilitários
   - Criar `ApiResponse<T>` com campos `data` e `error` (formato `{ "data": ..., "error": null }`)
   - Criar `PagedResponse<T>` com campos `content`, `page`, `size`, `totalElements`, `totalPages`
   - Criar `BusinessException`, `AllocationException`, `ResourceNotFoundException` em `shared/exception`
