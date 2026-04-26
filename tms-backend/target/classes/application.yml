@@ -1,11 +1,12 @@
 spring:
   application:
-    name: tms-backend
+    name: tms
 
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:tms}
-    username: ${DB_USER:tms}
-    password: ${DB_PASSWORD:tms}
+    driver-class-name: org.postgresql.Driver
+    url: ${DB_URL:}
+    username: ${DB_USERNAME:}
+    password: ${DB_PASSWORD:}
     hikari:
       maximum-pool-size: 20
       minimum-idle: 5
@@ -14,6 +15,7 @@ spring:
   jpa:
     hibernate:
       ddl-auto: validate
+    show-sql: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
@@ -30,8 +32,8 @@ spring:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: ${KEYCLOAK_ISSUER_URI:http://localhost:8080/realms/tms}
-          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8080/realms/tms/protocol/openid-connect/certs}
+          issuer-uri: ${KEYCLOAK_ISSUER_URI:}
+          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:}
 
   modulith:
     events:
@@ -41,7 +43,9 @@ spring:
 logging:
   level:
     root: INFO
-    pt.company.tms: INFO
+    pt.xavier.tms: INFO
+  pattern:
+    console: '{"timestamp":"%d{yyyy-MM-dd HH:mm:ss.SSS}","level":"%level","logger":"%logger{36}","thread":"%thread","message":"%message","exception":"%exception{short}"}%n'
 
 management:
   endpoints:

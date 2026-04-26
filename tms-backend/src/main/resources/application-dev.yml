@@ -16,15 +16,12 @@ spring:
 
 logging:
   level:
-    pt.company.tms: DEBUG
+    pt.xavier.tms: DEBUG
     org.hibernate.SQL: DEBUG
 
 tms:
   integration:
     rh:
-      mode: rest
-      base-url: http://localhost:9090
-      api-key: dev-api-key
+      mode: module
   storage:
     type: local
-    local-path: /tmp/tms-files

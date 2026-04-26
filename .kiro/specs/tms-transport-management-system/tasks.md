@@ -19,9 +19,10 @@ Este plano de implementação converte o design técnico do TMS numa sequência 
   - Criar estrutura de pacotes para os módulos: `vehicle`, `driver`, `activity`, `alert`, `audit`, `integration`, `shared`, `security`
   - _Requisitos: 14.1, 15.1, 16.1_
 
-- [ ] 2. Configurar PostgreSQL, Flyway e JPA
+- [x] 2. Configurar PostgreSQL, Flyway e JPA
+  - Criar `docker-compose.yml` na raiz do projeto com serviço PostgreSQL 16 (porta 5432, base de dados `tms_dev`, utilizador `tms_dev`, password `tms_dev`) e volume persistente `postgres_data`
   - Criar `application.yml` com configuração de datasource, JPA (`ddl-auto: validate`), Flyway e logging estruturado JSON
-  - Criar `application-dev.yml` com configuração local (PostgreSQL local, Keycloak local)
+  - Criar `application-dev.yml` com configuração local (PostgreSQL local via Docker Compose, Keycloak local)
   - Criar migration `V0__init_extensions.sql` com `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"` e `CREATE EXTENSION IF NOT EXISTS "pg_trgm"`
   - Configurar `@EnableJpaAuditing` e implementar `AuditorAware<String>` que lê o utilizador do `SecurityContext`
   - _Requisitos: 14.5, 16.2_
